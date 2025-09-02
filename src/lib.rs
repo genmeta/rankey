@@ -254,6 +254,38 @@ pub fn sign_certificate(
         })
 }
 
+/// Extracts DNS names from a PEM-encoded Certificate Signing Request (CSR).
+///
+/// This function parses a CSR from its PEM representation, extracts the Subject
+/// Alternative Name (SAN) extension, and filters for DNS names.
+///
+/// # Arguments
+///
+/// * `csr_pem` - A string slice containing the PEM-encoded CSR.
+///
+/// # Returns
+///
+/// A `Result<Vec<String>>` which is `Ok` containing a vector of DNS names on success,
+/// or an `Error` if parsing the CSR or extracting the SAN fails.
+pub fn extract_dns_names_from_csr_pem(csr_pem: &str) -> Result<Vec<String>> {
+    let csr = CertReq::from_pem(csr_pem).context(DerParseSnafu {
+        message: "Failed to parse CSR from PEM",
+    })?;
+
+    let san = extract_san(&csr)?;
+
+    let dns_names = san
+        .0
+        .iter()
+        .filter_map(|name| match name {
+            GeneralName::DnsName(dns_name) => Some(dns_name.to_string()),
+            _ => None,
+        })
+        .collect();
+
+    Ok(dns_names)
+}
+
 /// Extracts the Subject Alternative Name (SAN) extension from a Certificate Signing Request (CSR).
 ///
 /// This function looks for the `ID_EXTENSION_REQ` attribute within the CSR, which
@@ -348,6 +380,10 @@ mod tests {
         let csr_path = temp_dir.join("test.csr");
         let csr_pem = fs::read_to_string(&csr_path).expect("Failed to read CSR file");
 
+        let dns_names = extract_dns_names_from_csr_pem(csr_pem.as_str())
+            .expect("Failed to extract DNS names from CSR");
+        println!("Extracted DNS names from CSR: {:?}", dns_names);
+
         let result = sign_certificate(
             &csr_pem,
             "intermediate/intermediate.crt",
@@ -368,5 +404,23 @@ mod tests {
         println!("Signed certificate at: {}", cert_path.display());
         let cert = fs::read_to_string(&cert_path).expect("Failed to read certificate file");
         println!("Certificate content:\n{cert}");
+    }
+
+    #[test]
+    fn test_extract_dns_names_from_csr_pem() {
+        let key = generate_secp384r1_key().expect("Failed to generate key");
+        let subject_alt_names = &["test.example.com", "api.example.com", "www.example.com"];
+        let csr = generate_csr(&key, "US", "example.com", subject_alt_names)
+            .expect("Failed to generate CSR");
+        let csr_pem = csr.to_pem(LineEnding::LF).unwrap();
+
+        let result = extract_dns_names_from_csr_pem(&csr_pem);
+        assert!(result.is_ok());
+        let dns_names = result.unwrap();
+
+        assert_eq!(dns_names.len(), 3);
+        assert_eq!(dns_names[0], "test.example.com");
+        assert_eq!(dns_names[1], "api.example.com");
+        assert_eq!(dns_names[2], "www.example.com");
     }
 }
