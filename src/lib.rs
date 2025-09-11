@@ -233,7 +233,7 @@ pub fn sign_certificate(
             ),
         })?,
         issuer: ca_cert.tbs_certificate().subject().clone(),
-        client_auth: false,
+        client_auth: true,
     };
 
     // 构建证书
