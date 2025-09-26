@@ -37,8 +37,6 @@ use crate::{
 pub mod error;
 mod util;
 
-const SECONDS_PER_DAY: u64 = 86400; // 24 * 60 * 60
-
 /// Generates a new `secp384r1` elliptic curve private key.
 ///
 /// The key is generated randomly and returned in PKCS#8 PEM format.
@@ -166,7 +164,7 @@ fn build_csr(
 /// * `csr_pem` - A string slice containing the PEM-encoded Certificate Signing Request.
 /// * `ca_cert_path` - The file path to the CA's X.509 certificate in PEM format.
 /// * `ca_key_path` - The file path to the CA's private key in PKCS#8 PEM format.
-/// * `validity_days` - The number of days for which the issued certificate will be valid from now.
+/// * `validity_seconds` - The number of seconds for which the issued certificate will be valid from now.
 ///
 /// # Returns
 ///
@@ -177,7 +175,7 @@ pub fn sign_certificate(
     csr_pem: &str,
     ca_cert_path: &str,
     ca_key_path: &str,
-    validity_days: u64,
+    validity_seconds: u64,
 ) -> Result<CertificateInner> {
     // 加载CA证书和私钥
     let ca_cert = Certificate::from_pem(&fs::read_to_string(ca_cert_path).context(IoSnafu {
@@ -207,8 +205,8 @@ pub fn sign_certificate(
 
     // 准备证书元数据
     let serial_number = SerialNumber::generate(&mut rng());
-    let validity = Validity::from_now(Duration::from_secs(validity_days * SECONDS_PER_DAY))
-        .context(DerParseSnafu {
+    let validity =
+        Validity::from_now(Duration::from_secs(validity_seconds)).context(DerParseSnafu {
             message: "Failed to create certificate validity period",
         })?;
 
@@ -372,6 +370,8 @@ mod tests {
         println!("Generated CSR at: {}", csr_path.display());
         let csr = fs::read_to_string(&csr_path).expect("Failed to read CSR file");
         println!("CSR content:\n{csr}");
+        let base64_csr = base64_simd::STANDARD.encode_to_string(csr.as_bytes());
+        println!("Base64 Encoded CSR:\n{base64_csr}");
     }
 
     #[test]
@@ -388,7 +388,7 @@ mod tests {
             &csr_pem,
             "intermediate/intermediate.crt",
             "intermediate/intermediate.pkcs8.key",
-            365,
+            365 * 24 * 60 * 60, // 365 days in seconds
         );
 
         assert!(result.is_ok());

@@ -15,3 +15,6 @@ signature = { version = "=3.0.0-rc.1" }
 der_derive = { version = "=0.8.0-rc.3" }
 
 snafu = "0.8"
+
+[dev-dependencies]
+base64-simd = "0.8"
