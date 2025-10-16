@@ -4,15 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-p384 = "=0.14.0-pre.8"
-pkcs8 = { version = "=0.11.0-rc.4", features = ["pem"] }
-sha1 = { version = "=0.11.0-rc.0" }
-sha2 = { version = "=0.11.0-rc.0" }
-der = { version = "=0.8.0-rc.5" }
-x509-cert = { version = "=0.3.0-rc.0", features = ["builder"] }
+p384 = "=0.14.0-pre.11"
+pkcs8 = { version = "=0.11.0-rc.7", features = ["pem"] }
+sha1 = { version = "=0.11.0-rc.2" }
+sha2 = { version = "=0.11.0-rc.2" }
+der = { version = "=0.8.0-rc.9" }
+x509-cert = { version = "=0.3.0-rc.2", features = ["builder"] }
 rand = { version = "0.9" }
-signature = { version = "=3.0.0-rc.1" }
-der_derive = { version = "=0.8.0-rc.3" }
+signature = { version = "=3.0.0-rc.4" }
+der_derive = { version = "=0.8.0-rc.6" }
 
 snafu = "0.8"
 
