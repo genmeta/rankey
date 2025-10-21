@@ -1,13 +1,20 @@
 use std::{fs, str::FromStr, time::Duration};
 
+use chrono::{DateTime, Utc};
 pub use der::EncodePem;
-use der::{Decode, asn1::OctetString, oid::db::rfc5912::ID_EXTENSION_REQ, zeroize::Zeroizing};
+use der::{
+    Decode,
+    asn1::OctetString,
+    oid::db::{rfc5280::*, rfc5912::ID_EXTENSION_REQ},
+    zeroize::Zeroizing,
+};
 pub use p384::pkcs8::LineEnding;
 use p384::{
     ecdsa::{self, SigningKey},
     pkcs8::{DecodePrivateKey, EncodePrivateKey},
 };
 use rand::rng;
+use serde::Serialize;
 use sha1::Sha1;
 use sha2::Digest;
 use snafu::ResultExt;
@@ -333,6 +340,227 @@ fn extract_san(csr: &CertReq) -> Result<SubjectAltName> {
     })
 }
 
+/// 证书信息结构体,包含证书的所有关键信息
+#[derive(Debug, Clone, Serialize)]
+pub struct CertificateInfo {
+    /// 证书主体(Subject)
+    pub subject: String,
+    /// 证书颁发者(Issuer)
+    pub issuer: String,
+    /// 证书有效期开始时间
+    pub not_before: String,
+    /// 证书有效期结束时间
+    pub not_after: String,
+    /// 主体备用名称(Subject Alternative Names)
+    pub subject_alt_names: Vec<String>,
+    /// 扩展密钥用途(Extended Key Usage)
+    pub extended_key_usage: Vec<String>,
+    /// 密钥用途(Key Usage)
+    pub key_usage: Vec<String>,
+    /// 序列号
+    pub serial_number: String,
+    /// 公钥算法
+    pub public_key_algorithm: String,
+    /// 签名算法
+    pub signature_algorithm: String,
+}
+
+impl std::fmt::Display for CertificateInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Subject: {}", self.subject)?;
+        writeln!(f, "Issuer: {}", self.issuer)?;
+        writeln!(f, "Serial Number: {}", self.serial_number)?;
+        writeln!(f, "Validity:")?;
+        writeln!(f, "Not Before: {}", self.not_before)?;
+        writeln!(f, "Not After: {}", self.not_after)?;
+        writeln!(f, "Public Key Algorithm: {}", self.public_key_algorithm)?;
+        writeln!(f, "Signature Algorithm: {}", self.signature_algorithm)?;
+
+        if !self.subject_alt_names.is_empty() {
+            writeln!(
+                f,
+                "X509v3 Subject Alternative Name: {}",
+                self.subject_alt_names.join(", ")
+            )?;
+        }
+
+        if !self.key_usage.is_empty() {
+            writeln!(f, "X509v3 Key Usage: {}", self.key_usage.join(", "))?;
+        }
+
+        if !self.extended_key_usage.is_empty() {
+            writeln!(
+                f,
+                "X509v3 Extended Key Usage: {}",
+                self.extended_key_usage.join(", ")
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+/// 将 OID 转换为 Extended Key Usage 的可读名称
+fn oid_to_eku_name(oid: &der::asn1::ObjectIdentifier) -> String {
+    if oid == &ID_KP_SERVER_AUTH {
+        "serverAuth".to_string()
+    } else if oid == &ID_KP_CLIENT_AUTH {
+        "clientAuth".to_string()
+    } else if oid == &ID_KP_CODE_SIGNING {
+        "codeSigning".to_string()
+    } else if oid == &ID_KP_EMAIL_PROTECTION {
+        "emailProtection".to_string()
+    } else if oid == &ID_KP_TIME_STAMPING {
+        "timeStamping".to_string()
+    } else {
+        format!("{:?}", oid)
+    }
+}
+
+/// 将 OID 转换为算法名称
+fn oid_to_alg_name(oid: &der::asn1::ObjectIdentifier) -> String {
+    let oid_str = oid.to_string();
+    match oid_str.as_str() {
+        "1.2.840.10045.2.1" => "ECDSA".to_string(),
+        "1.2.840.10045.4.3.3" => "ECDSA with SHA-384".to_string(),
+        _ => format!("{:?}", oid),
+    }
+}
+
+/// 从PEM编码的证书中提取所有关键信息
+///
+/// 此函数解析X.509证书并提取包括主体、颁发者、有效期、
+/// Subject Alternative Names、Extended Key Usage等在内的所有重要信息。
+///
+/// # Arguments
+///
+/// * `cert_pem` - PEM格式的证书字符串
+///
+/// # Returns
+///
+/// 返回`Result<CertificateInfo>`，成功时包含证书的所有信息，
+/// 失败时返回错误信息。
+pub fn extract_certificate_info(cert_pem: &str) -> Result<CertificateInfo> {
+    let cert = Certificate::from_pem(cert_pem).context(DerParseSnafu {
+        message: "Failed to parse certificate from PEM",
+    })?;
+
+    let tbs = cert.tbs_certificate();
+
+    // 提取基本信息
+    let subject = tbs.subject().to_string();
+    let issuer = tbs.issuer().to_string();
+    let serial_number = tbs
+        .serial_number()
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{:02X}", b))
+        .collect::<String>();
+
+    // 提取有效期
+    let not_before = format_time(&tbs.validity().not_before);
+    let not_after = format_time(&tbs.validity().not_after);
+
+    // 提取公钥和签名算法
+    let public_key_algorithm = oid_to_alg_name(&tbs.subject_public_key_info().algorithm.oid);
+    let signature_algorithm = oid_to_alg_name(&tbs.signature().oid);
+
+    // 提取扩展信息
+    let mut subject_alt_names = Vec::new();
+    let mut extended_key_usage = Vec::new();
+    let mut key_usage = Vec::new();
+
+    if let Some(extensions) = tbs.extensions() {
+        for ext in extensions.iter() {
+            // 提取 Subject Alternative Names
+            if ext.extn_id == ID_CE_SUBJECT_ALT_NAME
+                && let Ok(san) = SubjectAltName::from_der(ext.extn_value.as_ref())
+            {
+                for name in san.0.iter() {
+                    match name {
+                        GeneralName::DnsName(dns) => {
+                            subject_alt_names.push(format!("DNS:{}", dns));
+                        }
+                        GeneralName::IpAddress(ip) => {
+                            subject_alt_names.push(format!("IP:{:?}", ip));
+                        }
+                        GeneralName::Rfc822Name(email) => {
+                            subject_alt_names.push(format!("Email:{}", email));
+                        }
+                        GeneralName::UniformResourceIdentifier(uri) => {
+                            subject_alt_names.push(format!("URI:{}", uri));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            // 提取 Extended Key Usage
+            if ext.extn_id.to_string() == "2.5.29.37" {
+                // ID_CE_EXT_KEY_USAGE
+                if let Ok(eku) = der::Decode::from_der(ext.extn_value.as_ref()) {
+                    let eku: Vec<der::asn1::ObjectIdentifier> = eku;
+                    for usage in eku.iter() {
+                        extended_key_usage.push(oid_to_eku_name(usage));
+                    }
+                }
+            }
+
+            // 提取 Key Usage
+            if ext.extn_id.to_string() == "2.5.29.15" {
+                // ID_CE_KEY_USAGE
+                if let Ok(ku_bytes) = der::asn1::BitString::from_der(ext.extn_value.as_ref()) {
+                    let bytes = ku_bytes.raw_bytes();
+                    if !bytes.is_empty() {
+                        let flags = bytes[0];
+                        if flags & 0b10000000 != 0 {
+                            key_usage.push("Digital Signature".to_string());
+                        }
+                        if flags & 0b01000000 != 0 {
+                            key_usage.push("Non Repudiation".to_string());
+                        }
+                        if flags & 0b00100000 != 0 {
+                            key_usage.push("Key Encipherment".to_string());
+                        }
+                        if flags & 0b00010000 != 0 {
+                            key_usage.push("Data Encipherment".to_string());
+                        }
+                        if flags & 0b00001000 != 0 {
+                            key_usage.push("Key Agreement".to_string());
+                        }
+                        if flags & 0b00000100 != 0 {
+                            key_usage.push("Certificate Sign".to_string());
+                        }
+                        if flags & 0b00000010 != 0 {
+                            key_usage.push("CRL Sign".to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(CertificateInfo {
+        subject,
+        issuer,
+        not_before,
+        not_after,
+        subject_alt_names,
+        extended_key_usage,
+        key_usage,
+        serial_number,
+        public_key_algorithm,
+        signature_algorithm,
+    })
+}
+
+/// 格式化时间为可读字符串
+fn format_time(time: &x509_cert::time::Time) -> String {
+    let duration = time.to_unix_duration();
+    let datetime = DateTime::<Utc>::from_timestamp(duration.as_secs() as i64, 0).unwrap();
+    datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,5 +650,43 @@ mod tests {
         assert_eq!(dns_names[0], "test.example.com");
         assert_eq!(dns_names[1], "api.example.com");
         assert_eq!(dns_names[2], "www.example.com");
+    }
+
+    #[test]
+    fn test_extract_certificate_info() {
+        let temp_dir = std::env::temp_dir();
+        let cert_path = temp_dir.join("signed_certificate.pem");
+
+        // 首先确保证书存在
+        if !cert_path.exists() {
+            // 运行 test_sign_certificate 来生成证书
+            test_sign_certificate();
+        }
+
+        let cert_pem_full =
+            fs::read_to_string(&cert_path).expect("Failed to read certificate file");
+
+        // 提取第一个证书 (服务器证书)
+        let cert_pem = if let Some(end_pos) = cert_pem_full.find("-----END CERTIFICATE-----") {
+            &cert_pem_full[..end_pos + "-----END CERTIFICATE-----".len()]
+        } else {
+            &cert_pem_full
+        };
+
+        let result = extract_certificate_info(cert_pem);
+        if let Err(e) = &result {
+            eprintln!("Error extracting certificate info: {}", e);
+        }
+        assert!(result.is_ok());
+
+        let cert_info = result.unwrap();
+        println!("\n{}", cert_info);
+
+        // 验证基本信息存在
+        assert!(!cert_info.subject.is_empty());
+        assert!(!cert_info.issuer.is_empty());
+        assert!(!cert_info.not_before.is_empty());
+        assert!(!cert_info.not_after.is_empty());
+        assert!(!cert_info.subject_alt_names.is_empty());
     }
 }
