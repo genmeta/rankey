@@ -1,6 +1,5 @@
 use std::{fs, str::FromStr, time::Duration};
 
-use chrono::{DateTime, Utc};
 pub use der::EncodePem;
 use der::{
     Decode,
@@ -11,12 +10,11 @@ use der::{
 pub use p384::pkcs8::LineEnding;
 use p384::{
     ecdsa::{self, SigningKey},
+    elliptic_curve::Generate,
     pkcs8::{DecodePrivateKey, EncodePrivateKey},
 };
 use rand::rng;
-use serde::Serialize;
-use sha1::Sha1;
-use sha2::Digest;
+use sha1::{Digest, Sha1};
 use snafu::ResultExt;
 use x509_cert::{
     Certificate,
@@ -28,7 +26,9 @@ use x509_cert::{
     der::{DecodePem, asn1::Ia5String},
     ext::{
         Extension,
-        pkix::{ID_CE_SUBJECT_ALT_NAME, SubjectAltName, SubjectKeyIdentifier, name::GeneralName},
+        pkix::{
+            ExtendedKeyUsage, KeyUsage, SubjectAltName, SubjectKeyIdentifier, name::GeneralName,
+        },
     },
     name::Name,
     request::{CertReq, RequestBuilder},
@@ -55,7 +55,7 @@ mod util;
 /// A `pkcs8::Result` containing the PEM-encoded private key string on success,
 /// or an error if key generation or encoding fails.
 pub fn generate_secp384r1_key() -> pkcs8::Result<Zeroizing<String>> {
-    let secret_key = SigningKey::random(&mut rng());
+    let secret_key = SigningKey::generate();
     secret_key.to_pkcs8_pem(LineEnding::LF)
 }
 
@@ -83,7 +83,7 @@ pub fn generate_csr(
     subject_alt_names: &[&str],
 ) -> Result<CertReq> {
     let signing_key = SigningKey::from_pkcs8_pem(key_pem).context(Pkcs8ParseSnafu {
-        message: format!("Failed to parse signing key from PEM: {key_pem}"),
+        message: "Failed to parse signing key from PEM",
     })?;
     let subject =
         Name::from_str(&format!("CN={common_name},C={country}")).context(DerParseSnafu {
@@ -99,19 +99,6 @@ pub fn generate_csr(
 }
 
 /// Converts a slice of string references into a `SubjectAltName` extension for X.509 certificates.
-///
-/// This function iterates through the provided subject alternative names (SANs) and attempts
-/// to parse each as a DNS name, collecting them into a `SubjectAltName` structure.
-///
-/// # Arguments
-///
-/// * `subject_alt_names` - A slice of string references, where each string is expected to be
-///   a domain name or IP address to be included as a Subject Alternative Name.
-///
-/// # Returns
-///
-/// A `Result` containing the constructed `SubjectAltName` on success, or an error if any
-/// of the input names cannot be parsed into the required format (e.g., `Ia5String`).
 fn create_subject_alt_names(subject_alt_names: &[&str]) -> Result<SubjectAltName> {
     let mut san = Vec::with_capacity(subject_alt_names.len());
     for san_name in subject_alt_names {
@@ -126,21 +113,6 @@ fn create_subject_alt_names(subject_alt_names: &[&str]) -> Result<SubjectAltName
 
 /// Builds a Certificate Signing Request (CSR) using the provided subject,
 /// Subject Alternative Names (SANs), and a signing key.
-///
-/// This function initializes a CSR builder, adds the subject and SAN extension,
-/// and then signs the request with the given private key.
-///
-/// # Arguments
-///
-/// * `subject` - The X.509 `Name` structure representing the subject of the CSR.
-/// * `san` - The `SubjectAltName` structure containing any desired alternative names
-///   (e.g., DNS names, IP addresses) for the certificate.
-/// * `signing_key` - A reference to the `SigningKey` used to cryptographically sign the CSR.
-///
-/// # Returns
-///
-/// A `x509_cert::builder::Result<CertReq>` which is `Ok(CertReq)` on successful
-/// creation and signing of the CSR, or an error if the building or signing process fails.
 fn build_csr(
     subject: Name,
     san: SubjectAltName,
@@ -155,17 +127,6 @@ fn build_csr(
 /// Signs a Certificate Signing Request (CSR) using the provided Certificate Authority (CA)
 /// certificate and private key, issuing a new X.509 certificate.
 ///
-/// This function performs the following steps:
-/// 1. Loads the CA certificate and private key from the specified paths.
-/// 2. Parses the input CSR (PEM-encoded).
-/// 3. Extracts Subject Alternative Names (SANs) from the CSR.
-/// 4. Verifies the signature of the CSR itself.
-/// 5. Generates a unique serial number and sets the validity period for the new certificate.
-/// 6. Creates a Subject Key Identifier (SKI) for the new certificate.
-/// 7. Constructs the new certificate using a CABF TLS Subscriber profile, incorporating
-///    the subject and public key from the CSR, and adding SAN and SKI extensions.
-/// 8. Signs the newly built certificate with the CA's private key.
-///
 /// # Arguments
 ///
 /// * `csr_pem` - A string slice containing the PEM-encoded Certificate Signing Request.
@@ -176,8 +137,7 @@ fn build_csr(
 /// # Returns
 ///
 /// A `Result<CertificateInner>` which is `Ok(CertificateInner)` on successful
-/// issuance and signing of the certificate, or an error if any step fails,
-/// such as file I/O errors, parsing errors, invalid CSR, or signing issues.
+/// issuance and signing of the certificate, or an error if any step fails.
 pub fn sign_certificate(
     csr_pem: &str,
     ca_cert_path: &str,
@@ -200,7 +160,7 @@ pub fn sign_certificate(
         })?;
 
     // 解析CSR并提取关键信息
-    let csr = x509_cert::request::CertReq::from_pem(csr_pem).context(DerParseSnafu {
+    let csr = CertReq::from_pem(csr_pem).context(DerParseSnafu {
         message: "Failed to parse CSR from PEM",
     })?;
     let san = extract_san(&csr)?;
@@ -246,10 +206,10 @@ pub fn sign_certificate(
         .context(X509BuilderSnafu {
             message: "Failed to create certificate builder",
         })?;
-    builder.add_extension(&san).context(X509BuilderSnafu {
+    builder.add_extension(&san).context(DerParseSnafu {
         message: format!("Failed to add SAN extension: {san:?}"),
     })?;
-    builder.add_extension(&ski).context(X509BuilderSnafu {
+    builder.add_extension(&ski).context(DerParseSnafu {
         message: format!("Failed to add SKI extension: {ski:?}"),
     })?;
     builder
@@ -261,17 +221,13 @@ pub fn sign_certificate(
 
 /// Extracts DNS names from a PEM-encoded Certificate Signing Request (CSR).
 ///
-/// This function parses a CSR from its PEM representation, extracts the Subject
-/// Alternative Name (SAN) extension, and filters for DNS names.
-///
 /// # Arguments
 ///
 /// * `csr_pem` - A string slice containing the PEM-encoded CSR.
 ///
 /// # Returns
 ///
-/// A `Result<Vec<String>>` which is `Ok` containing a vector of DNS names on success,
-/// or an `Error` if parsing the CSR or extracting the SAN fails.
+/// A `Result<Vec<String>>` containing DNS names on success.
 pub fn extract_dns_names_from_csr_pem(csr_pem: &str) -> Result<Vec<String>> {
     let csr = CertReq::from_pem(csr_pem).context(DerParseSnafu {
         message: "Failed to parse CSR from PEM",
@@ -292,21 +248,6 @@ pub fn extract_dns_names_from_csr_pem(csr_pem: &str) -> Result<Vec<String>> {
 }
 
 /// Extracts the Subject Alternative Name (SAN) extension from a Certificate Signing Request (CSR).
-///
-/// This function looks for the `ID_EXTENSION_REQ` attribute within the CSR, which
-/// contains a list of requested extensions. It then specifically searches for the
-/// `ID_CE_SUBJECT_ALT_NAME` extension within that list and attempts to parse its
-/// value into a `SubjectAltName` structure.
-///
-/// # Arguments
-///
-/// * `csr` - A reference to the `CertReq` (Certificate Signing Request) from which to extract the SAN.
-///
-/// # Returns
-///
-/// A `Result<SubjectAltName>` which is `Ok(SubjectAltName)` if the SAN extension
-/// is successfully found and parsed, or an `Error` if the `ID_EXTENSION_REQ`
-/// attribute is missing, the SAN extension is not found, or parsing fails.
 fn extract_san(csr: &CertReq) -> Result<SubjectAltName> {
     let ext_req_attr = csr
         .info
@@ -341,7 +282,8 @@ fn extract_san(csr: &CertReq) -> Result<SubjectAltName> {
 }
 
 /// 证书信息结构体,包含证书的所有关键信息
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CertificateInfo {
     /// 证书主体(Subject)
     pub subject: String,
@@ -402,28 +344,23 @@ impl std::fmt::Display for CertificateInfo {
 
 /// 将 OID 转换为 Extended Key Usage 的可读名称
 fn oid_to_eku_name(oid: &der::asn1::ObjectIdentifier) -> String {
-    if oid == &ID_KP_SERVER_AUTH {
-        "serverAuth".to_string()
-    } else if oid == &ID_KP_CLIENT_AUTH {
-        "clientAuth".to_string()
-    } else if oid == &ID_KP_CODE_SIGNING {
-        "codeSigning".to_string()
-    } else if oid == &ID_KP_EMAIL_PROTECTION {
-        "emailProtection".to_string()
-    } else if oid == &ID_KP_TIME_STAMPING {
-        "timeStamping".to_string()
-    } else {
-        format!("{:?}", oid)
+    match *oid {
+        ID_KP_SERVER_AUTH => "serverAuth".to_string(),
+        ID_KP_CLIENT_AUTH => "clientAuth".to_string(),
+        ID_KP_CODE_SIGNING => "codeSigning".to_string(),
+        ID_KP_EMAIL_PROTECTION => "emailProtection".to_string(),
+        ID_KP_TIME_STAMPING => "timeStamping".to_string(),
+        _ => format!("{oid}"),
     }
 }
 
 /// 将 OID 转换为算法名称
 fn oid_to_alg_name(oid: &der::asn1::ObjectIdentifier) -> String {
-    let oid_str = oid.to_string();
-    match oid_str.as_str() {
-        "1.2.840.10045.2.1" => "ECDSA".to_string(),
-        "1.2.840.10045.4.3.3" => "ECDSA with SHA-384".to_string(),
-        _ => format!("{:?}", oid),
+    use der::oid::db::rfc5912;
+    match *oid {
+        rfc5912::ID_EC_PUBLIC_KEY => "ECDSA".to_string(),
+        rfc5912::ECDSA_WITH_SHA_384 => "ECDSA with SHA-384".to_string(),
+        _ => format!("{oid}"),
     }
 }
 
@@ -479,16 +416,16 @@ pub fn extract_certificate_info(cert_pem: &str) -> Result<CertificateInfo> {
                 for name in san.0.iter() {
                     match name {
                         GeneralName::DnsName(dns) => {
-                            subject_alt_names.push(format!("DNS:{}", dns));
+                            subject_alt_names.push(format!("DNS:{dns}"));
                         }
                         GeneralName::IpAddress(ip) => {
-                            subject_alt_names.push(format!("IP:{:?}", ip));
+                            subject_alt_names.push(format!("IP:{ip:?}"));
                         }
                         GeneralName::Rfc822Name(email) => {
-                            subject_alt_names.push(format!("Email:{}", email));
+                            subject_alt_names.push(format!("Email:{email}"));
                         }
                         GeneralName::UniformResourceIdentifier(uri) => {
-                            subject_alt_names.push(format!("URI:{}", uri));
+                            subject_alt_names.push(format!("URI:{uri}"));
                         }
                         _ => {}
                     }
@@ -496,45 +433,44 @@ pub fn extract_certificate_info(cert_pem: &str) -> Result<CertificateInfo> {
             }
 
             // 提取 Extended Key Usage
-            if ext.extn_id.to_string() == "2.5.29.37" {
-                // ID_CE_EXT_KEY_USAGE
-                if let Ok(eku) = der::Decode::from_der(ext.extn_value.as_ref()) {
-                    let eku: Vec<der::asn1::ObjectIdentifier> = eku;
-                    for usage in eku.iter() {
-                        extended_key_usage.push(oid_to_eku_name(usage));
-                    }
+            if ext.extn_id == ID_CE_EXT_KEY_USAGE
+                && let Ok(eku) = ExtendedKeyUsage::from_der(ext.extn_value.as_ref())
+            {
+                for usage in eku.0.iter() {
+                    extended_key_usage.push(oid_to_eku_name(usage));
                 }
             }
 
             // 提取 Key Usage
-            if ext.extn_id.to_string() == "2.5.29.15" {
-                // ID_CE_KEY_USAGE
-                if let Ok(ku_bytes) = der::asn1::BitString::from_der(ext.extn_value.as_ref()) {
-                    let bytes = ku_bytes.raw_bytes();
-                    if !bytes.is_empty() {
-                        let flags = bytes[0];
-                        if flags & 0b10000000 != 0 {
-                            key_usage.push("Digital Signature".to_string());
-                        }
-                        if flags & 0b01000000 != 0 {
-                            key_usage.push("Non Repudiation".to_string());
-                        }
-                        if flags & 0b00100000 != 0 {
-                            key_usage.push("Key Encipherment".to_string());
-                        }
-                        if flags & 0b00010000 != 0 {
-                            key_usage.push("Data Encipherment".to_string());
-                        }
-                        if flags & 0b00001000 != 0 {
-                            key_usage.push("Key Agreement".to_string());
-                        }
-                        if flags & 0b00000100 != 0 {
-                            key_usage.push("Certificate Sign".to_string());
-                        }
-                        if flags & 0b00000010 != 0 {
-                            key_usage.push("CRL Sign".to_string());
-                        }
-                    }
+            if ext.extn_id == ID_CE_KEY_USAGE
+                && let Ok(ku) = KeyUsage::from_der(ext.extn_value.as_ref())
+            {
+                if ku.digital_signature() {
+                    key_usage.push("Digital Signature".to_string());
+                }
+                if ku.non_repudiation() {
+                    key_usage.push("Non Repudiation".to_string());
+                }
+                if ku.key_encipherment() {
+                    key_usage.push("Key Encipherment".to_string());
+                }
+                if ku.data_encipherment() {
+                    key_usage.push("Data Encipherment".to_string());
+                }
+                if ku.key_agreement() {
+                    key_usage.push("Key Agreement".to_string());
+                }
+                if ku.key_cert_sign() {
+                    key_usage.push("Certificate Sign".to_string());
+                }
+                if ku.crl_sign() {
+                    key_usage.push("CRL Sign".to_string());
+                }
+                if ku.encipher_only() {
+                    key_usage.push("Encipher Only".to_string());
+                }
+                if ku.decipher_only() {
+                    key_usage.push("Decipher Only".to_string());
                 }
             }
         }
@@ -556,9 +492,16 @@ pub fn extract_certificate_info(cert_pem: &str) -> Result<CertificateInfo> {
 
 /// 格式化时间为可读字符串
 fn format_time(time: &x509_cert::time::Time) -> String {
-    let duration = time.to_unix_duration();
-    let datetime = DateTime::<Utc>::from_timestamp(duration.as_secs() as i64, 0).unwrap();
-    datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+    let dt = time.to_date_time();
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        dt.year(),
+        dt.month(),
+        dt.day(),
+        dt.hour(),
+        dt.minutes(),
+        dt.seconds()
+    )
 }
 
 #[cfg(test)]
