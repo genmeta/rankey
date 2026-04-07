@@ -1,4 +1,8 @@
-use std::{fs, str::FromStr, time::Duration};
+use std::{
+    fs,
+    str::FromStr,
+    time::{Duration, UNIX_EPOCH},
+};
 
 pub use der::EncodePem;
 use der::{
@@ -15,7 +19,7 @@ use p384::{
 };
 use rand::rng;
 use sha1::{Digest, Sha1};
-use snafu::ResultExt;
+use snafu::{ResultExt, whatever};
 use x509_cert::{
     Certificate,
     builder::{
@@ -27,7 +31,8 @@ use x509_cert::{
     ext::{
         Extension,
         pkix::{
-            ExtendedKeyUsage, KeyUsage, SubjectAltName, SubjectKeyIdentifier, name::GeneralName,
+            CrlReason, ExtendedKeyUsage, KeyUsage, SubjectAltName, SubjectKeyIdentifier,
+            name::GeneralName,
         },
     },
     name::Name,
@@ -42,7 +47,26 @@ use crate::{
 };
 
 pub mod error;
+mod ocsp;
 mod util;
+
+fn load_certificate_from_pem_file(path: &str) -> Result<Certificate> {
+    Certificate::from_pem(&fs::read_to_string(path).context(IoSnafu {
+        path: path.to_string(),
+    })?)
+    .context(DerParseSnafu {
+        message: format!("Failed to parse certificate from PEM: {path}"),
+    })
+}
+
+fn load_signing_key_from_pem_file(path: &str) -> Result<SigningKey> {
+    SigningKey::from_pkcs8_pem(&fs::read_to_string(path).context(IoSnafu {
+        path: path.to_string(),
+    })?)
+    .context(Pkcs8ParseSnafu {
+        message: format!("Failed to parse signing key from PEM: {path}"),
+    })
+}
 
 /// Generates a new `secp384r1` elliptic curve private key.
 ///
@@ -145,19 +169,8 @@ pub fn sign_certificate(
     validity_seconds: u64,
 ) -> Result<CertificateInner> {
     // 加载CA证书和私钥
-    let ca_cert = Certificate::from_pem(&fs::read_to_string(ca_cert_path).context(IoSnafu {
-        path: ca_cert_path.to_string(),
-    })?)
-    .context(DerParseSnafu {
-        message: format!("Failed to parse CA certificate from PEM: {ca_cert_path}"),
-    })?;
-    let ca_signing_key =
-        SigningKey::from_pkcs8_pem(&fs::read_to_string(ca_key_path).context(IoSnafu {
-            path: ca_key_path.to_string(),
-        })?)
-        .context(Pkcs8ParseSnafu {
-            message: format!("Failed to parse CA signing key from PEM: {ca_key_path}"),
-        })?;
+    let ca_cert = load_certificate_from_pem_file(ca_cert_path)?;
+    let ca_signing_key = load_signing_key_from_pem_file(ca_key_path)?;
 
     // 解析CSR并提取关键信息
     let csr = CertReq::from_pem(csr_pem).context(DerParseSnafu {
@@ -217,6 +230,103 @@ pub fn sign_certificate(
         .context(X509BuilderSnafu {
             message: "Failed to build certificate",
         })
+}
+
+/// Signs a DER-encoded OCSP response with `good` status for the provided leaf certificate.
+///
+/// This is intended for OCSP stapling use cases where the caller already has a leaf certificate
+/// and needs a short-lived OCSP response signed by the issuer.
+pub fn sign_good_ocsp_response(
+    cert_pem: &str,
+    ca_cert_path: &str,
+    ca_key_path: &str,
+    validity_seconds: u64,
+) -> Result<Vec<u8>> {
+    let cert = Certificate::from_pem(cert_pem).context(DerParseSnafu {
+        message: "Failed to parse leaf certificate from PEM",
+    })?;
+    let ca_cert = load_certificate_from_pem_file(ca_cert_path)?;
+    let ca_signing_key = load_signing_key_from_pem_file(ca_key_path)?;
+
+    if cert.tbs_certificate().issuer() != ca_cert.tbs_certificate().subject() {
+        whatever!("Leaf certificate issuer does not match provided CA subject");
+    }
+
+    ocsp::sign_good_ocsp_response(&cert, &ca_cert, &ca_signing_key, validity_seconds)
+}
+
+/// Signs a DER-encoded OCSP response with `revoked` status for the provided leaf certificate.
+pub fn sign_revoked_ocsp_response(
+    cert_pem: &str,
+    ca_cert_path: &str,
+    ca_key_path: &str,
+    revoked_at_unix: i64,
+    revocation_reason: Option<u32>,
+    validity_seconds: u64,
+) -> Result<Vec<u8>> {
+    let cert = Certificate::from_pem(cert_pem).context(DerParseSnafu {
+        message: "Failed to parse leaf certificate from PEM",
+    })?;
+    let ca_cert = load_certificate_from_pem_file(ca_cert_path)?;
+    let ca_signing_key = load_signing_key_from_pem_file(ca_key_path)?;
+
+    if cert.tbs_certificate().issuer() != ca_cert.tbs_certificate().subject() {
+        whatever!("Leaf certificate issuer does not match provided CA subject");
+    }
+
+    let revoked_at_secs = revoked_at_unix
+        .try_into()
+        .whatever_context("OCSP revocation timestamp must be non-negative")?;
+    let revoked_at = match UNIX_EPOCH.checked_add(Duration::from_secs(revoked_at_secs)) {
+        Some(revoked_at) => revoked_at,
+        None => whatever!("Failed to calculate OCSP revocation time"),
+    };
+    let revocation_reason = revocation_reason.map(crl_reason_from_u32).transpose()?;
+
+    ocsp::sign_revoked_ocsp_response(
+        &cert,
+        &ca_cert,
+        &ca_signing_key,
+        revoked_at,
+        revocation_reason,
+        validity_seconds,
+    )
+}
+
+/// Signs a DER-encoded OCSP response with `unknown` status for the provided leaf certificate.
+pub fn sign_unknown_ocsp_response(
+    cert_pem: &str,
+    ca_cert_path: &str,
+    ca_key_path: &str,
+    validity_seconds: u64,
+) -> Result<Vec<u8>> {
+    let cert = Certificate::from_pem(cert_pem).context(DerParseSnafu {
+        message: "Failed to parse leaf certificate from PEM",
+    })?;
+    let ca_cert = load_certificate_from_pem_file(ca_cert_path)?;
+    let ca_signing_key = load_signing_key_from_pem_file(ca_key_path)?;
+
+    if cert.tbs_certificate().issuer() != ca_cert.tbs_certificate().subject() {
+        whatever!("Leaf certificate issuer does not match provided CA subject");
+    }
+
+    ocsp::sign_unknown_ocsp_response(&cert, &ca_cert, &ca_signing_key, validity_seconds)
+}
+
+fn crl_reason_from_u32(reason: u32) -> Result<CrlReason> {
+    match reason {
+        0 => Ok(CrlReason::Unspecified),
+        1 => Ok(CrlReason::KeyCompromise),
+        2 => Ok(CrlReason::CaCompromise),
+        3 => Ok(CrlReason::AffiliationChanged),
+        4 => Ok(CrlReason::Superseded),
+        5 => Ok(CrlReason::CessationOfOperation),
+        6 => Ok(CrlReason::CertificateHold),
+        8 => Ok(CrlReason::RemoveFromCRL),
+        9 => Ok(CrlReason::PrivilegeWithdrawn),
+        10 => Ok(CrlReason::AaCompromise),
+        _ => whatever!("Invalid CRL reason: {reason}"),
+    }
 }
 
 /// Extracts DNS names from a PEM-encoded Certificate Signing Request (CSR).
@@ -506,7 +616,42 @@ fn format_time(time: &x509_cert::time::Time) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use der::Decode;
+
+    use super::{
+        ocsp::{BasicOcspResponse, CertStatus, OcspResponse, OcspResponseStatus},
+        *,
+    };
+
+    fn issue_test_leaf_cert() -> String {
+        let key = generate_secp384r1_key().expect("Failed to generate key");
+        let csr = generate_csr(
+            &key,
+            "CN",
+            "ocsp-test.pilot.genmeta.net",
+            &["ocsp-test.pilot.genmeta.net"],
+        )
+        .expect("Failed to generate CSR");
+        let csr_pem = csr.to_pem(LineEnding::LF).unwrap();
+        let cert = sign_certificate(
+            &csr_pem,
+            "intermediate/intermediate.crt",
+            "intermediate/intermediate.pkcs8.key",
+            365 * 24 * 60 * 60,
+        )
+        .expect("Failed to sign leaf certificate");
+
+        cert.to_pem(LineEnding::LF).unwrap()
+    }
+
+    fn decode_basic_ocsp_response(ocsp_der: &[u8]) -> BasicOcspResponse {
+        let ocsp = OcspResponse::from_der(ocsp_der).expect("Failed to decode OCSP response");
+        assert_eq!(ocsp.response_status, OcspResponseStatus::Successful);
+
+        let response_bytes = ocsp.response_bytes.expect("Missing OCSP response bytes");
+        BasicOcspResponse::from_der(response_bytes.response.as_bytes())
+            .expect("Failed to decode basic OCSP response")
+    }
 
     #[test]
     fn test_generate_secp384r1_key() {
@@ -549,7 +694,27 @@ mod tests {
     fn test_sign_certificate() {
         let temp_dir = std::env::temp_dir();
         let csr_path = temp_dir.join("test.csr");
-        let csr_pem = fs::read_to_string(&csr_path).expect("Failed to read CSR file");
+        let csr_pem = if csr_path.exists() {
+            fs::read_to_string(&csr_path).expect("Failed to read CSR file")
+        } else {
+            let key = generate_secp384r1_key().expect("Failed to generate key");
+            let csr = generate_csr(
+                &key,
+                "CN",
+                "borber.pilot.genmeta.net",
+                &[
+                    "borber.pilot.genmeta.net",
+                    "api.borber.pilot.genmeta.net",
+                    "www.borber.pilot.genmeta.net",
+                ],
+            )
+            .expect("Failed to generate CSR");
+            let csr_pem = csr
+                .to_pem(LineEnding::LF)
+                .expect("Failed to encode CSR PEM");
+            fs::write(&csr_path, &csr_pem).expect("Failed to write CSR file");
+            csr_pem
+        };
 
         let dns_names = extract_dns_names_from_csr_pem(csr_pem.as_str())
             .expect("Failed to extract DNS names from CSR");
@@ -631,5 +796,71 @@ mod tests {
         assert!(!cert_info.not_before.is_empty());
         assert!(!cert_info.not_after.is_empty());
         assert!(!cert_info.subject_alt_names.is_empty());
+    }
+
+    #[test]
+    fn test_sign_good_ocsp_response() {
+        let cert_pem = issue_test_leaf_cert();
+
+        let ocsp_der = sign_good_ocsp_response(
+            &cert_pem,
+            "intermediate/intermediate.crt",
+            "intermediate/intermediate.pkcs8.key",
+            3 * 60 * 60,
+        )
+        .expect("Failed to sign OCSP response");
+
+        let basic = decode_basic_ocsp_response(&ocsp_der);
+        assert_eq!(basic.tbs_response_data.responses.len(), 1);
+
+        let single_response = &basic.tbs_response_data.responses[0];
+        assert!(matches!(single_response.cert_status, CertStatus::Good(_)));
+        assert!(single_response.next_update.is_some());
+    }
+
+    #[test]
+    fn test_sign_revoked_ocsp_response() {
+        let cert_pem = issue_test_leaf_cert();
+
+        let ocsp_der = sign_revoked_ocsp_response(
+            &cert_pem,
+            "intermediate/intermediate.crt",
+            "intermediate/intermediate.pkcs8.key",
+            1_700_000_000,
+            Some(1),
+            3 * 60 * 60,
+        )
+        .expect("Failed to sign revoked OCSP response");
+
+        let basic = decode_basic_ocsp_response(&ocsp_der);
+        assert_eq!(basic.tbs_response_data.responses.len(), 1);
+
+        let single_response = &basic.tbs_response_data.responses[0];
+        assert!(matches!(
+            single_response.cert_status,
+            CertStatus::Revoked(_)
+        ));
+    }
+
+    #[test]
+    fn test_sign_unknown_ocsp_response() {
+        let cert_pem = issue_test_leaf_cert();
+
+        let ocsp_der = sign_unknown_ocsp_response(
+            &cert_pem,
+            "intermediate/intermediate.crt",
+            "intermediate/intermediate.pkcs8.key",
+            3 * 60 * 60,
+        )
+        .expect("Failed to sign unknown OCSP response");
+
+        let basic = decode_basic_ocsp_response(&ocsp_der);
+        assert_eq!(basic.tbs_response_data.responses.len(), 1);
+
+        let single_response = &basic.tbs_response_data.responses[0];
+        assert!(matches!(
+            single_response.cert_status,
+            CertStatus::Unknown(_)
+        ));
     }
 }
