@@ -154,14 +154,14 @@ fn sign_ocsp_response(
     let now = SystemTime::now();
     let next_update = match now.checked_add(Duration::from_secs(validity_seconds)) {
         Some(next_update) => next_update,
-        None => whatever!("Failed to calculate OCSP next_update"),
+        None => whatever!("failed to calculate OCSP next_update"),
     };
 
     let produced_at = GeneralizedTime::try_from(now).context(DerParseSnafu {
-        message: "Failed to create OCSP produced_at time",
+        message: "failed to create OCSP produced_at time",
     })?;
     let next_update = GeneralizedTime::try_from(next_update).context(DerParseSnafu {
-        message: "Failed to create OCSP next_update time",
+        message: "failed to create OCSP next_update time",
     })?;
     let response_data = ResponseData {
         version: Version::default(),
@@ -179,16 +179,16 @@ fn sign_ocsp_response(
 
     let signature_algorithm = signer
         .signature_algorithm_identifier()
-        .whatever_context("Failed to build OCSP signature algorithm identifier")?;
+        .whatever_context("failed to build OCSP signature algorithm identifier")?;
     let tbs_response_data = response_data.to_der().context(DerParseSnafu {
-        message: "Failed to encode OCSP response data to DER",
+        message: "failed to encode OCSP response data to DER",
     })?;
     let signature: ecdsa::DerSignature = signer
         .try_sign(&tbs_response_data)
-        .whatever_context("Failed to sign OCSP response data")?;
+        .whatever_context("failed to sign OCSP response data")?;
     let signature = signature
         .to_bitstring()
-        .whatever_context("Failed to encode OCSP signature as bit string")?;
+        .whatever_context("failed to encode OCSP signature as bit string")?;
 
     let basic_response = BasicOcspResponse {
         tbs_response_data: response_data,
@@ -202,16 +202,16 @@ fn sign_ocsp_response(
         response_bytes: Some(ResponseBytes {
             response_type: ID_PKIX_OCSP_BASIC,
             response: OctetString::new(basic_response.to_der().context(DerParseSnafu {
-                message: "Failed to encode basic OCSP response to DER",
+                message: "failed to encode basic OCSP response to DER",
             })?)
             .context(DerParseSnafu {
-                message: "Failed to wrap basic OCSP response bytes",
+                message: "failed to wrap basic OCSP response bytes",
             })?,
         }),
     };
 
     response.to_der().context(DerParseSnafu {
-        message: "Failed to encode OCSP response to DER",
+        message: "failed to encode OCSP response to DER",
     })
 }
 
@@ -233,7 +233,7 @@ pub fn sign_revoked_ocsp_response(
     validity_seconds: u64,
 ) -> Result<Vec<u8>> {
     let revocation_time = GeneralizedTime::try_from(revoked_at).context(DerParseSnafu {
-        message: "Failed to create OCSP revocation time",
+        message: "failed to create OCSP revocation time",
     })?;
     sign_ocsp_response(
         cert,
@@ -262,7 +262,7 @@ pub fn sign_unknown_ocsp_response(
 fn build_cert_id(issuer: &Certificate, cert: &Certificate) -> Result<CertId> {
     let issuer_name_hash = Sha1::digest(issuer.tbs_certificate().subject().to_der().context(
         DerParseSnafu {
-            message: "Failed to encode issuer subject to DER",
+            message: "failed to encode issuer subject to DER",
         },
     )?);
     let issuer_key_hash = Sha1::digest(
@@ -279,10 +279,10 @@ fn build_cert_id(issuer: &Certificate, cert: &Certificate) -> Result<CertId> {
             parameters: Some(Null.into()),
         },
         issuer_name_hash: OctetString::new(issuer_name_hash.as_slice()).context(DerParseSnafu {
-            message: "Failed to encode issuer name hash",
+            message: "failed to encode issuer name hash",
         })?,
         issuer_key_hash: OctetString::new(issuer_key_hash.as_slice()).context(DerParseSnafu {
-            message: "Failed to encode issuer key hash",
+            message: "failed to encode issuer key hash",
         })?,
         serial_number: cert.tbs_certificate().serial_number().clone(),
     })

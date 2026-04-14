@@ -26,22 +26,22 @@ pub fn verify_signature(cert_req: &CertReq) -> crate::error::Result<()> {
     match cert_req.algorithm.oid {
         rfc5912::ECDSA_WITH_SHA_384 => {
             let spki = cert_req.info.public_key.to_der().context(DerParseSnafu {
-                message: "Failed to parse public key in CSR",
+                message: "failed to parse public key in CSR",
             })?;
             let signed_data = cert_req.info.to_der().context(DerParseSnafu {
-                message: "Failed to parse signed data",
+                message: "failed to parse signed data",
             })?;
             let signature_der = cert_req.signature.raw_bytes();
             let signature = p384::ecdsa::DerSignature::from_bytes(signature_der)
-                .whatever_context("Failed to parse der signature")?;
+                .whatever_context("failed to parse der signature")?;
             let verifying_key = p384::ecdsa::VerifyingKey::from_public_key_der(&spki)
-                .whatever_context("Failed to parse verify key")?;
+                .whatever_context("failed to parse verify key")?;
             verifying_key
                 .verify(&signed_data, &signature)
-                .whatever_context("Failed to verify")?;
+                .whatever_context("failed to verify")?;
         }
         _ => {
-            whatever!("Unsupported algorithm");
+            whatever!("unsupported algorithm");
         }
     }
 

@@ -55,7 +55,7 @@ fn load_certificate_from_pem_file(path: &str) -> Result<Certificate> {
         path: path.to_string(),
     })?)
     .context(DerParseSnafu {
-        message: format!("Failed to parse certificate from PEM: {path}"),
+        message: format!("failed to parse certificate from PEM: {path}"),
     })
 }
 
@@ -64,7 +64,7 @@ fn load_signing_key_from_pem_file(path: &str) -> Result<SigningKey> {
         path: path.to_string(),
     })?)
     .context(Pkcs8ParseSnafu {
-        message: format!("Failed to parse signing key from PEM: {path}"),
+        message: format!("failed to parse signing key from PEM: {path}"),
     })
 }
 
@@ -107,16 +107,16 @@ pub fn generate_csr(
     subject_alt_names: &[&str],
 ) -> Result<CertReq> {
     let signing_key = SigningKey::from_pkcs8_pem(key_pem).context(Pkcs8ParseSnafu {
-        message: "Failed to parse signing key from PEM",
+        message: "failed to parse signing key from PEM",
     })?;
     let subject =
         Name::from_str(&format!("CN={common_name},C={country}")).context(DerParseSnafu {
-            message: format!("Failed to parse subject name: CN={common_name}, C={country}"),
+            message: format!("failed to parse subject name: CN={common_name}, C={country}"),
         })?;
 
     let san = create_subject_alt_names(subject_alt_names)?;
     let cert_req = build_csr(subject, san, &signing_key).context(X509BuilderSnafu {
-        message: "Failed to build CSR",
+        message: "failed to build CSR",
     })?;
 
     Ok(cert_req)
@@ -128,7 +128,7 @@ fn create_subject_alt_names(subject_alt_names: &[&str]) -> Result<SubjectAltName
     for san_name in subject_alt_names {
         san.push(GeneralName::DnsName(Ia5String::new(san_name).context(
             DerParseSnafu {
-                message: format!("Failed to parse SAN name: {san_name}"),
+                message: format!("failed to parse SAN name: {san_name}"),
             },
         )?));
     }
@@ -174,7 +174,7 @@ pub fn sign_certificate(
 
     // 解析CSR并提取关键信息
     let csr = CertReq::from_pem(csr_pem).context(DerParseSnafu {
-        message: "Failed to parse CSR from PEM",
+        message: "failed to parse CSR from PEM",
     })?;
     let san = extract_san(&csr)?;
 
@@ -187,14 +187,14 @@ pub fn sign_certificate(
     let serial_number = SerialNumber::generate(&mut rng());
     let validity =
         Validity::from_now(Duration::from_secs(validity_seconds)).context(DerParseSnafu {
-            message: "Failed to create certificate validity period",
+            message: "failed to create certificate validity period",
         })?;
 
     // 构建扩展项
     let public_key_hash = Sha1::digest(public_key.subject_public_key.raw_bytes());
     let ski = SubjectKeyIdentifier(OctetString::new(public_key_hash.as_slice()).context(
         DerParseSnafu {
-            message: format!("Failed to create SubjectKeyIdentifier: {public_key_hash:?}"),
+            message: format!("failed to create SubjectKeyIdentifier: {public_key_hash:?}"),
         },
     )?);
 
@@ -206,7 +206,7 @@ pub fn sign_certificate(
         )
         .context(X509BuilderSnafu {
             message: format!(
-                "Failed to create certificate type for subject: {} and SANs: {san:?}",
+                "failed to create certificate type for subject: {} and SANs: {san:?}",
                 csr.info.subject
             ),
         })?,
@@ -217,18 +217,18 @@ pub fn sign_certificate(
     // 构建证书
     let mut builder = CertificateBuilder::new(profile, serial_number, validity, public_key.clone())
         .context(X509BuilderSnafu {
-            message: "Failed to create certificate builder",
+            message: "failed to create certificate builder",
         })?;
     builder.add_extension(&san).context(DerParseSnafu {
-        message: format!("Failed to add SAN extension: {san:?}"),
+        message: format!("failed to add SAN extension: {san:?}"),
     })?;
     builder.add_extension(&ski).context(DerParseSnafu {
-        message: format!("Failed to add SKI extension: {ski:?}"),
+        message: format!("failed to add SKI extension: {ski:?}"),
     })?;
     builder
         .build::<_, ecdsa::DerSignature>(&ca_signing_key)
         .context(X509BuilderSnafu {
-            message: "Failed to build certificate",
+            message: "failed to build certificate",
         })
 }
 
@@ -243,13 +243,13 @@ pub fn sign_good_ocsp_response(
     validity_seconds: u64,
 ) -> Result<Vec<u8>> {
     let cert = Certificate::from_pem(cert_pem).context(DerParseSnafu {
-        message: "Failed to parse leaf certificate from PEM",
+        message: "failed to parse leaf certificate from PEM",
     })?;
     let ca_cert = load_certificate_from_pem_file(ca_cert_path)?;
     let ca_signing_key = load_signing_key_from_pem_file(ca_key_path)?;
 
     if cert.tbs_certificate().issuer() != ca_cert.tbs_certificate().subject() {
-        whatever!("Leaf certificate issuer does not match provided CA subject");
+        whatever!("leaf certificate issuer does not match provided CA subject");
     }
 
     ocsp::sign_good_ocsp_response(&cert, &ca_cert, &ca_signing_key, validity_seconds)
@@ -265,13 +265,13 @@ pub fn sign_revoked_ocsp_response(
     validity_seconds: u64,
 ) -> Result<Vec<u8>> {
     let cert = Certificate::from_pem(cert_pem).context(DerParseSnafu {
-        message: "Failed to parse leaf certificate from PEM",
+        message: "failed to parse leaf certificate from PEM",
     })?;
     let ca_cert = load_certificate_from_pem_file(ca_cert_path)?;
     let ca_signing_key = load_signing_key_from_pem_file(ca_key_path)?;
 
     if cert.tbs_certificate().issuer() != ca_cert.tbs_certificate().subject() {
-        whatever!("Leaf certificate issuer does not match provided CA subject");
+        whatever!("leaf certificate issuer does not match provided CA subject");
     }
 
     let revoked_at_secs = revoked_at_unix
@@ -279,7 +279,7 @@ pub fn sign_revoked_ocsp_response(
         .whatever_context("OCSP revocation timestamp must be non-negative")?;
     let revoked_at = match UNIX_EPOCH.checked_add(Duration::from_secs(revoked_at_secs)) {
         Some(revoked_at) => revoked_at,
-        None => whatever!("Failed to calculate OCSP revocation time"),
+        None => whatever!("failed to calculate OCSP revocation time"),
     };
     let revocation_reason = revocation_reason.map(crl_reason_from_u32).transpose()?;
 
@@ -301,13 +301,13 @@ pub fn sign_unknown_ocsp_response(
     validity_seconds: u64,
 ) -> Result<Vec<u8>> {
     let cert = Certificate::from_pem(cert_pem).context(DerParseSnafu {
-        message: "Failed to parse leaf certificate from PEM",
+        message: "failed to parse leaf certificate from PEM",
     })?;
     let ca_cert = load_certificate_from_pem_file(ca_cert_path)?;
     let ca_signing_key = load_signing_key_from_pem_file(ca_key_path)?;
 
     if cert.tbs_certificate().issuer() != ca_cert.tbs_certificate().subject() {
-        whatever!("Leaf certificate issuer does not match provided CA subject");
+        whatever!("leaf certificate issuer does not match provided CA subject");
     }
 
     ocsp::sign_unknown_ocsp_response(&cert, &ca_cert, &ca_signing_key, validity_seconds)
@@ -325,7 +325,7 @@ fn crl_reason_from_u32(reason: u32) -> Result<CrlReason> {
         8 => Ok(CrlReason::RemoveFromCRL),
         9 => Ok(CrlReason::PrivilegeWithdrawn),
         10 => Ok(CrlReason::AaCompromise),
-        _ => whatever!("Invalid CRL reason: {reason}"),
+        _ => whatever!("invalid CRL reason: {reason}"),
     }
 }
 
@@ -340,7 +340,7 @@ fn crl_reason_from_u32(reason: u32) -> Result<CrlReason> {
 /// A `Result<Vec<String>>` containing DNS names on success.
 pub fn extract_dns_names_from_csr_pem(csr_pem: &str) -> Result<Vec<String>> {
     let csr = CertReq::from_pem(csr_pem).context(DerParseSnafu {
-        message: "Failed to parse CSR from PEM",
+        message: "failed to parse CSR from PEM",
     })?;
 
     let san = extract_san(&csr)?;
@@ -376,7 +376,7 @@ fn extract_san(csr: &CertReq) -> Result<SubjectAltName> {
         })?
         .decode_as::<Vec<Extension>>()
         .context(DerParseSnafu {
-            message: "Failed to parse extension request value".to_string(),
+            message: "failed to parse extension request value".to_string(),
         })?;
 
     let san = extensions
@@ -387,7 +387,7 @@ fn extract_san(csr: &CertReq) -> Result<SubjectAltName> {
         })?;
 
     SubjectAltName::from_der(san.extn_value.as_ref()).context(DerParseSnafu {
-        message: "Failed to parse SubjectAltName from CSR".to_string(),
+        message: "failed to parse SubjectAltName from CSR".to_string(),
     })
 }
 
@@ -489,7 +489,7 @@ fn oid_to_alg_name(oid: &der::asn1::ObjectIdentifier) -> String {
 /// 失败时返回错误信息。
 pub fn extract_certificate_info(cert_pem: &str) -> Result<CertificateInfo> {
     let cert = Certificate::from_pem(cert_pem).context(DerParseSnafu {
-        message: "Failed to parse certificate from PEM",
+        message: "failed to parse certificate from PEM",
     })?;
 
     let tbs = cert.tbs_certificate();
@@ -624,14 +624,14 @@ mod tests {
     };
 
     fn issue_test_leaf_cert() -> String {
-        let key = generate_secp384r1_key().expect("Failed to generate key");
+        let key = generate_secp384r1_key().expect("failed to generate key");
         let csr = generate_csr(
             &key,
             "CN",
             "ocsp-test.pilot.genmeta.net",
             &["ocsp-test.pilot.genmeta.net"],
         )
-        .expect("Failed to generate CSR");
+        .expect("failed to generate CSR");
         let csr_pem = csr.to_pem(LineEnding::LF).unwrap();
         let cert = sign_certificate(
             &csr_pem,
@@ -639,23 +639,23 @@ mod tests {
             "intermediate/intermediate.pkcs8.key",
             365 * 24 * 60 * 60,
         )
-        .expect("Failed to sign leaf certificate");
+        .expect("failed to sign leaf certificate");
 
         cert.to_pem(LineEnding::LF).unwrap()
     }
 
     fn decode_basic_ocsp_response(ocsp_der: &[u8]) -> BasicOcspResponse {
-        let ocsp = OcspResponse::from_der(ocsp_der).expect("Failed to decode OCSP response");
+        let ocsp = OcspResponse::from_der(ocsp_der).expect("failed to decode OCSP response");
         assert_eq!(ocsp.response_status, OcspResponseStatus::Successful);
 
         let response_bytes = ocsp.response_bytes.expect("Missing OCSP response bytes");
         BasicOcspResponse::from_der(response_bytes.response.as_bytes())
-            .expect("Failed to decode basic OCSP response")
+            .expect("failed to decode basic OCSP response")
     }
 
     #[test]
     fn test_generate_secp384r1_key() {
-        let _key = generate_secp384r1_key().expect("Failed to generate key");
+        let _key = generate_secp384r1_key().expect("failed to generate key");
     }
 
     #[test]
@@ -663,10 +663,10 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let key_path = temp_dir.join("test.key");
         let csr_path = temp_dir.join("test.csr");
-        let key = generate_secp384r1_key().expect("Failed to generate key");
-        fs::write(&key_path, key.as_bytes()).expect("Failed to write key to file");
+        let key = generate_secp384r1_key().expect("failed to generate key");
+        fs::write(&key_path, key.as_bytes()).expect("failed to write key to file");
         println!("Generated key at: {}", key_path.display());
-        let key = fs::read_to_string(&key_path).expect("Failed to read key file");
+        let key = fs::read_to_string(&key_path).expect("failed to read key file");
         println!("Key content:\n{key}");
 
         let result = generate_csr(
@@ -682,9 +682,9 @@ mod tests {
         assert!(result.is_ok());
         let csr = result.unwrap();
         let csr_pem = csr.to_pem(LineEnding::LF).unwrap();
-        fs::write(&csr_path, csr_pem).expect("Failed to write CSR to file");
+        fs::write(&csr_path, csr_pem).expect("failed to write CSR to file");
         println!("Generated CSR at: {}", csr_path.display());
-        let csr = fs::read_to_string(&csr_path).expect("Failed to read CSR file");
+        let csr = fs::read_to_string(&csr_path).expect("failed to read CSR file");
         println!("CSR content:\n{csr}");
         let base64_csr = base64_simd::STANDARD.encode_to_string(csr.as_bytes());
         println!("Base64 Encoded CSR:\n{base64_csr}");
@@ -695,9 +695,9 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let csr_path = temp_dir.join("test.csr");
         let csr_pem = if csr_path.exists() {
-            fs::read_to_string(&csr_path).expect("Failed to read CSR file")
+            fs::read_to_string(&csr_path).expect("failed to read CSR file")
         } else {
-            let key = generate_secp384r1_key().expect("Failed to generate key");
+            let key = generate_secp384r1_key().expect("failed to generate key");
             let csr = generate_csr(
                 &key,
                 "CN",
@@ -708,16 +708,16 @@ mod tests {
                     "www.borber.pilot.genmeta.net",
                 ],
             )
-            .expect("Failed to generate CSR");
+            .expect("failed to generate CSR");
             let csr_pem = csr
                 .to_pem(LineEnding::LF)
-                .expect("Failed to encode CSR PEM");
-            fs::write(&csr_path, &csr_pem).expect("Failed to write CSR file");
+                .expect("failed to encode CSR PEM");
+            fs::write(&csr_path, &csr_pem).expect("failed to write CSR file");
             csr_pem
         };
 
         let dns_names = extract_dns_names_from_csr_pem(csr_pem.as_str())
-            .expect("Failed to extract DNS names from CSR");
+            .expect("failed to extract DNS names from CSR");
         println!("Extracted DNS names from CSR: {:?}", dns_names);
 
         let result = sign_certificate(
@@ -732,22 +732,22 @@ mod tests {
         let mut cert_pem = cert.to_pem(LineEnding::LF).unwrap();
         // 将 intermediate CA 证书 附加到生成的证书中
         let ca_cert_pem = fs::read_to_string("intermediate/intermediate.crt")
-            .expect("Failed to read CA certificate file");
+            .expect("failed to read CA certificate file");
         cert_pem.push_str(&ca_cert_pem);
 
         let cert_path = temp_dir.join("signed_certificate.pem");
-        fs::write(&cert_path, cert_pem).expect("Failed to write certificate to file");
+        fs::write(&cert_path, cert_pem).expect("failed to write certificate to file");
         println!("Signed certificate at: {}", cert_path.display());
-        let cert = fs::read_to_string(&cert_path).expect("Failed to read certificate file");
+        let cert = fs::read_to_string(&cert_path).expect("failed to read certificate file");
         println!("Certificate content:\n{cert}");
     }
 
     #[test]
     fn test_extract_dns_names_from_csr_pem() {
-        let key = generate_secp384r1_key().expect("Failed to generate key");
+        let key = generate_secp384r1_key().expect("failed to generate key");
         let subject_alt_names = &["test.example.com", "api.example.com", "www.example.com"];
         let csr = generate_csr(&key, "US", "example.com", subject_alt_names)
-            .expect("Failed to generate CSR");
+            .expect("failed to generate CSR");
         let csr_pem = csr.to_pem(LineEnding::LF).unwrap();
 
         let result = extract_dns_names_from_csr_pem(&csr_pem);
@@ -772,7 +772,7 @@ mod tests {
         }
 
         let cert_pem_full =
-            fs::read_to_string(&cert_path).expect("Failed to read certificate file");
+            fs::read_to_string(&cert_path).expect("failed to read certificate file");
 
         // 提取第一个证书 (服务器证书)
         let cert_pem = if let Some(end_pos) = cert_pem_full.find("-----END CERTIFICATE-----") {
@@ -808,7 +808,7 @@ mod tests {
             "intermediate/intermediate.pkcs8.key",
             3 * 60 * 60,
         )
-        .expect("Failed to sign OCSP response");
+        .expect("failed to sign OCSP response");
 
         let basic = decode_basic_ocsp_response(&ocsp_der);
         assert_eq!(basic.tbs_response_data.responses.len(), 1);
@@ -830,7 +830,7 @@ mod tests {
             Some(1),
             3 * 60 * 60,
         )
-        .expect("Failed to sign revoked OCSP response");
+        .expect("failed to sign revoked OCSP response");
 
         let basic = decode_basic_ocsp_response(&ocsp_der);
         assert_eq!(basic.tbs_response_data.responses.len(), 1);
@@ -852,7 +852,7 @@ mod tests {
             "intermediate/intermediate.pkcs8.key",
             3 * 60 * 60,
         )
-        .expect("Failed to sign unknown OCSP response");
+        .expect("failed to sign unknown OCSP response");
 
         let basic = decode_basic_ocsp_response(&ocsp_der);
         assert_eq!(basic.tbs_response_data.responses.len(), 1);
