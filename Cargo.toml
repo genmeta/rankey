@@ -1,7 +1,13 @@
 [package]
 name = "rankey"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
+description = "X.509 certificate, OCSP response, and secp384r1 key management library"
+license = "MIT"
+repository = "https://github.com/genmeta/rankey"
+readme = "README.md"
+keywords = ["certificate", "ocsp", "x509", "secp384r1"]
+categories = ["cryptography"]
 
 [features]
 default = ["serde"]
