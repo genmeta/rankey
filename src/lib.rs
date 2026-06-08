@@ -628,8 +628,8 @@ mod tests {
         let csr = generate_csr(
             &key,
             "CN",
-            "ocsp-test.pilot.genmeta.net",
-            &["ocsp-test.pilot.genmeta.net"],
+            "ocsp-test.pilot.dhttp.net",
+            &["ocsp-test.pilot.dhttp.net"],
         )
         .expect("failed to generate CSR");
         let csr_pem = csr.to_pem(LineEnding::LF).unwrap();
@@ -672,11 +672,11 @@ mod tests {
         let result = generate_csr(
             &key,
             "CN",
-            "borber.pilot.genmeta.net",
+            "borber.pilot.dhttp.net",
             &[
-                "borber.pilot.genmeta.net",
-                "api.borber.pilot.genmeta.net",
-                "www.borber.pilot.genmeta.net",
+                "borber.pilot.dhttp.net",
+                "api.borber.pilot.dhttp.net",
+                "www.borber.pilot.dhttp.net",
             ],
         );
         assert!(result.is_ok());
@@ -701,11 +701,11 @@ mod tests {
             let csr = generate_csr(
                 &key,
                 "CN",
-                "borber.pilot.genmeta.net",
+                "borber.pilot.dhttp.net",
                 &[
-                    "borber.pilot.genmeta.net",
-                    "api.borber.pilot.genmeta.net",
-                    "www.borber.pilot.genmeta.net",
+                    "borber.pilot.dhttp.net",
+                    "api.borber.pilot.dhttp.net",
+                    "www.borber.pilot.dhttp.net",
                 ],
             )
             .expect("failed to generate CSR");
