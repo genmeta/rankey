@@ -1,6 +1,6 @@
 [package]
 name = "rankey"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 description = "X.509 certificate, OCSP response, and secp384r1 key management library"
 license = "MIT"
