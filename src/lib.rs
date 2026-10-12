@@ -279,7 +279,9 @@ pub fn sign_revoked_ocsp_response(
         .whatever_context("OCSP revocation timestamp must be non-negative")?;
     let revoked_at = match UNIX_EPOCH.checked_add(Duration::from_secs(revoked_at_secs)) {
         Some(revoked_at) => revoked_at,
-        None => whatever!("failed to calculate OCSP revocation time"),
+        None => {
+            whatever!("failed to calculate OCSP revocation time");
+        }
     };
     let revocation_reason = revocation_reason.map(crl_reason_from_u32).transpose()?;
 
@@ -325,7 +327,9 @@ fn crl_reason_from_u32(reason: u32) -> Result<CrlReason> {
         8 => Ok(CrlReason::RemoveFromCRL),
         9 => Ok(CrlReason::PrivilegeWithdrawn),
         10 => Ok(CrlReason::AaCompromise),
-        _ => whatever!("invalid CRL reason: {reason}"),
+        _ => {
+            whatever!("invalid CRL reason: {reason}");
+        }
     }
 }
 

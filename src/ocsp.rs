@@ -154,7 +154,9 @@ fn sign_ocsp_response(
     let now = SystemTime::now();
     let next_update = match now.checked_add(Duration::from_secs(validity_seconds)) {
         Some(next_update) => next_update,
-        None => whatever!("failed to calculate OCSP next_update"),
+        None => {
+            whatever!("failed to calculate OCSP next_update");
+        }
     };
 
     let produced_at = GeneralizedTime::try_from(now).context(DerParseSnafu {
