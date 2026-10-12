@@ -1,6 +1,6 @@
 [package]
 name = "rankey"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 description = "X.509 certificate, OCSP response, and secp384r1 key management library"
 license = "MIT"
@@ -15,8 +15,8 @@ serde = ["dep:serde"]
 
 [dependencies]
 der = { version = "0.8.0" }
-p384 = "0.14.0-rc.7"
-pkcs8 = { version = "=0.11.0-rc.11", features = ["pem"] }
+p384 = "0.14"
+pkcs8 = { version = "0.11", features = ["pem"] }
 rand = { version = "0.10" }
 serde = { version = "1", features = ["derive"], optional = true }
 sha1 = { version = "0.11" }
@@ -24,19 +24,7 @@ sha1 = { version = "0.11" }
 # `AssociatedOid` impl for `Sha384`, which is needed by p384's ECDSA signing.
 sha2 = { version = "0.11", features = ["oid"] }
 snafu = "0.8"
-x509-cert = { version = "=0.3.0-rc.4", features = ["builder"] }
-
-# Explicitly lock transitive dependencies to avoid breakage from newer RC versions
-crypto-bigint = { version = "=0.7.0-rc.28" }
-ecdsa = { version = "=0.17.0-rc.16" }
-elliptic-curve = { version = "=0.14.0-rc.28" }
-hmac = { version = "0.13" }
-primefield = { version = "=0.14.0-rc.7" }
-primeorder = { version = "=0.14.0-rc.7" }
-rfc6979 = { version = "=0.5.0-rc.5" }
-sec1 = { version = "=0.8.0-rc.13" }
-signature = { version = "=3.0.0-rc.10" }
-spki = { version = "=0.8.0-rc.4" }
+x509-cert = { version = "0.3", features = ["builder"] }
 
 [dev-dependencies]
 base64-simd = "0.8"
