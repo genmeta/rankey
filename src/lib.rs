@@ -623,6 +623,32 @@ mod tests {
         *,
     };
 
+    #[test]
+    fn stable_crypto_csr_preserves_p384_key_and_signature() {
+        use pkcs8::EncodePublicKey;
+
+        let key = generate_secp384r1_key().unwrap();
+        let csr = generate_csr(&key, "CN", "alice.dhttp.net", &["alice.dhttp.net"]).unwrap();
+        verify_signature(&csr).unwrap();
+        let signing_key = SigningKey::from_pkcs8_pem(&key).unwrap();
+        assert_eq!(
+            signing_key
+                .verifying_key()
+                .to_public_key_der()
+                .unwrap()
+                .as_bytes(),
+            der::Encode::to_der(&csr.info.public_key).unwrap(),
+        );
+        let pem = csr.to_pem(LineEnding::LF).unwrap();
+        assert_eq!(
+            extract_dns_names_from_csr_pem(&pem).unwrap(),
+            ["alice.dhttp.net"]
+        );
+        let mut altered = csr;
+        altered.info.subject = Name::from_str("CN=mallory.dhttp.net,C=CN").unwrap();
+        assert!(verify_signature(&altered).is_err());
+    }
+
     fn issue_test_leaf_cert() -> String {
         let key = generate_secp384r1_key().expect("failed to generate key");
         let csr = generate_csr(
