@@ -29,3 +29,6 @@ upstream publication and lockfile refresh; merge and tag only that checked commi
 Planned tag: `v0.3.0`. Release through the repository's GitHub Actions workflow.
 Use an annotated tag with the changelog entry as its release notes. Actual
 publication and production deployment remain separate from this preparation PR.
+
+The v0.3.0 tag publishes the rankey crate and creates its GitHub Release
+after the publication step succeeds. The tag must match Cargo.toml.
